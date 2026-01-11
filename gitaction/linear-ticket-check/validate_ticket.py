@@ -47,23 +47,38 @@ def main():
     
     # 1. Determine text to check based on event type
     text_to_check = ''
+    check_source = ''
+
     if event_name == 'push':
         print('Event: Push (Checking Commit Message)')
         text_to_check = os.environ.get('COMMIT_MSG', '')
+        check_source = 'Commit Message'
+
     elif event_name == 'pull_request':
-        print('Event: Pull Request (Checking PR Description)')
         pr_body = os.environ.get('PR_BODY', '')
+        pr_title = os.environ.get('PR_TITLE', '')
         
         # Handle cases where body might be literal "None" string or empty
         if not pr_body or pr_body == 'None':
              pr_body = ''
         
+        # --- NEW LOGIC START ---
         lines = pr_body.splitlines()
-        if not lines:
-            fail_with_comment('PR Description cannot be empty. Please add the Linear Ticket ID (e.g. ENG-123: Description) to the first line.')
         
-        # Rule: First line must be the ticket line
-        text_to_check = lines[0]
+        if not lines:
+            # Condition B: Body is empty -> Check Title
+            print('Event: Pull Request (Body is empty -> Checking PR Title)')
+            text_to_check = pr_title
+            check_source = 'PR Title'
+            
+            if not text_to_check:
+                 fail_with_comment('PR Description is empty and PR Title is missing/empty.')
+        else:
+            # Condition A: Body exists -> Check First Line
+            print('Event: Pull Request (Body exists -> Checking First Line of Description)')
+            text_to_check = lines[0]
+            check_source = 'First line of PR Description'
+        # --- NEW LOGIC END ---
 
     # 2. Parse Ticket ID
     # Matches 'ID: ' followed by 10+ chars
@@ -72,7 +87,7 @@ def main():
     match = re.search(pattern, text_to_check)
 
     if not match:
-        fail_with_comment(f'The first line format is invalid.\n\n**Found:** \"{text_to_check}\"\n**Expected:** \"ENG-123: Detailed description here...\"\n\n(Must start with ID, have a colon, and at least 10 chars of description)')
+        fail_with_comment(f'The format in the **{check_source}** is invalid.\n\n**Found:** \"{text_to_check}\"\n**Expected:** \"ENG-123: Detailed description here...\"\n\n(Must start with ID, have a colon, and at least 10 chars of description)')
 
     ticket_id = match.group(1)
     print(f'Found Ticket ID: {ticket_id}')
