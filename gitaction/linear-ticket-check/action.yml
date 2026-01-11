@@ -1,0 +1,29 @@
+name: 'Validate Commit Message or PR Description Contains Valid Linear Ticket'
+description: 'Checks if the PR description or Commit message contains a valid Linear Ticket ID and verifies it with the API.'
+inputs:
+  linear-api-key:
+    description: 'Your Linear API Key'
+    required: true
+  github-token:
+    description: 'GitHub Token (usually secrets.GITHUB_TOKEN) used to comment on failures.'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Ticket Validation Script
+      shell: bash
+      env:
+        # Map inputs to env vars for the script
+        LINEAR_API_KEY: ${{ inputs.linear-api-key }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        
+        # Pass GitHub Context to the script
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVENT_NAME: ${{ github.event_name }}
+        COMMIT_MSG: ${{ github.event.head_commit.message }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+        
+      # ${{ github.action_path }} ensures it finds the script inside the action folder
+      run: python3 ${{ github.action_path }}/validate_ticket.py
