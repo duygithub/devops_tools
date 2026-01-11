@@ -54,12 +54,10 @@ def main():
         text_to_check = os.environ.get('COMMIT_MSG', '')
         check_source = 'Commit Message'
 
-        # --- NEW LOGIC: Ignore Merge Commits ---
-        # Standard GitHub merge commits start with these phrases
+        # --- Ignore Merge Commits ---
         if text_to_check.startswith('Merge pull request') or text_to_check.startswith('Merge branch'):
             print(f"Skipping validation for Merge Commit: {text_to_check}")
             sys.exit(0)
-        # ---------------------------------------
 
     elif event_name == 'pull_request':
         pr_body = os.environ.get('PR_BODY', '')
@@ -87,12 +85,12 @@ def main():
 
     # 2. Parse Ticket ID
     # Matches 'ID: ' followed by 10+ chars
-    # Example: ENG-123: Fixed the login bug
-    pattern = r'^([A-Z]+-\d+):\s(.{10,})'
+    # UPDATED REGEX: Ensures ID starts with 1-9 (e.g., ENG-1, not ENG-0 or ENG-01)
+    pattern = r'^([A-Z]+-[1-9][0-9]*):\s(.{10,})'
     match = re.search(pattern, text_to_check)
 
     if not match:
-        fail_with_comment(f'The format in the **{check_source}** is invalid.\n\n**Found:** \"{text_to_check}\"\n**Expected:** \"ENG-123: Detailed description here...\"\n\n(Must start with ID, have a colon, and at least 10 chars of description)')
+        fail_with_comment(f'The format in the **{check_source}** is invalid.\n\n**Found:** \"{text_to_check}\"\n**Expected:** \"ENG-123: Detailed description here...\"\n\n(Must start with ID [no leading zeros], have a colon, and at least 10 chars of description)')
 
     ticket_id = match.group(1)
     print(f'Found Ticket ID: {ticket_id}')
