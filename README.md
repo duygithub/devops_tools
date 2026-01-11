@@ -26,7 +26,7 @@ Add the following to your .github/workflows/your_file_name.yml
 steps:
   - uses: actions/checkout@v4
   
-  - uses: duygithub/devops_tools/gitaction/linear-ticket-check@main
+  - uses: duygithub/devops_tools/gitaction/linear-ticket-check@1.0.0
     with:
       linear-api-key: ${{ secrets.LINEAR_API_KEY }}
       github-token: ${{ secrets.GITHUB_TOKEN }}
