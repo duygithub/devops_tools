@@ -5,6 +5,7 @@ import json
 import subprocess
 import urllib.request
 import urllib.error
+from datetime import datetime
 
 def run_command(command):
     return subprocess.check_output(command, shell=True).decode('utf-8').strip()
@@ -16,14 +17,14 @@ def main():
     repo_name = os.environ.get('GITHUB_REPOSITORY') # e.g. "my-org/my-repo"
     current_tag = os.environ.get('GITHUB_REF_NAME') # e.g. "v1.0.1"
     
-    # Check for Dry Run flag (defaults to false)
+    # Check for Dry Run flag
     is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
     print(f"Generating notes for tag: {current_tag}")
     if is_dry_run:
         print("🧪 MODE: DRY RUN (No changes will be pushed to GitHub)")
 
-    # 1. Identify the Commit Range (Previous Tag -> Current Tag)
+    # 1. Identify the Commit Range
     try:
         prev_tag = run_command(f"git describe --tags --abbrev=0 {current_tag}^ 2>/dev/null || echo ''")
     except:
@@ -37,8 +38,6 @@ def main():
         log_range = current_tag
 
     # 2. Get Commit Messages
-    # UPDATED FORMAT: "CommitHash|AuthorName|Subject"
-    # We put Author in the middle to avoid issues if Subject contains pipes
     try:
         git_log = run_command(f'git log {log_range} --pretty=format:"%h|%an|%s"')
         commits = git_log.splitlines()
@@ -49,31 +48,24 @@ def main():
     # 3. Extract Linear IDs and Build Change Log
     linear_ids = set()
     change_log_lines = []
-    
-    # Regex to find IDs like ENG-123
     id_pattern = r'([A-Z]+-\d+)'
 
     for line in commits:
         if "|" not in line: continue
-        # Split into exactly 3 parts
         parts = line.split("|", 2)
         if len(parts) < 3: continue
         
         hash_id, author, subject = parts
-        
-        # UPDATED: Add Author to the line
         change_log_lines.append(f"* {subject} ({hash_id}) - @{author}")
         
-        # Find Linear IDs
         found = re.findall(id_pattern, subject)
         for ticket in found:
             linear_ids.add(ticket)
 
-    # 4. Fetch Linear Titles (The "Summary" Section)
+    # 4. Fetch Linear Titles
     summary_lines = []
     if linear_ids and linear_api_key:
         print(f"Fetching titles for {len(linear_ids)} tickets...")
-        
         ids_string = '", "'.join(linear_ids)
         query = f"""
         query {{
@@ -102,31 +94,53 @@ def main():
         except Exception as e:
             print(f"Warning: Failed to fetch Linear data: {e}")
 
-    # 5. Build Release Info Section (NEW)
+    # 5. Build Release Info Section (UPDATED)
     release_branch = "Unknown"
     release_author = os.environ.get('GITHUB_ACTOR', 'Unknown')
+    # Default time is "Now" (UTC) unless overridden by the event
+    release_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     
-    # Try to parse GitHub Event payload to get accurate Release data
     event_path = os.environ.get('GITHUB_EVENT_PATH')
     if event_path and os.path.exists(event_path):
         try:
             with open(event_path, 'r') as f:
                 event_data = json.load(f)
-            # Check if this was triggered by a Release event
+            
+            # Case A: Real Release Event
             if 'release' in event_data:
                 release_branch = event_data['release'].get('target_commitish', release_branch)
                 release_author = event_data['release'].get('author', {}).get('login', release_author)
+                
+                # Parse and reformat the timestamp from GitHub (e.g. 2023-10-05T14:48:00Z)
+                raw_date = event_data['release'].get('created_at')
+                if raw_date:
+                    release_time = raw_date.replace('T', ' ').replace('Z', ' UTC')
+
+            # Case B: Fallback for Dispatch/Push (Testing)
+            else:
+                # If we are testing, the "branch" is technically the ref we are on
+                if release_branch == "Unknown":
+                    # Try getting ref name, but if it's a tag, this will just be the tag name.
+                    # This is just a hint for the dry run output.
+                    release_branch = os.environ.get('GITHUB_REF_NAME', 'HEAD')
+
         except Exception as e:
             print(f"Warning: Could not parse event payload: {e}")
 
     # 6. Assemble Markdown
     markdown_body = "## 🚀 Release Info\n"
     markdown_body += f"* **Branch:** {release_branch}\n"
+    markdown_body += f"* **Time:** {release_time}\n"
     markdown_body += f"* **Created By:** {release_author}\n\n"
 
     markdown_body += "## 📝 Summary (Linear Tickets)\n"
     if summary_lines:
         markdown_body += "\n".join(summary_lines)
+    elif linear_ids:
+        markdown_body += "⚠️ **Warning:** Could not fetch ticket titles (Check API Key or Logs).\n\n"
+        markdown_body += "**Referenced Tickets:**\n"
+        for tid in sorted(linear_ids):
+            markdown_body += f"* {tid}\n"
     else:
         markdown_body += "No Linear tickets referenced."
 
@@ -136,7 +150,7 @@ def main():
     else:
         markdown_body += "No commits found in this range."
 
-    # 7. Generate Local File (NEW REQUIREMENT)
+    # 7. Generate Local File
     output_filename = "release_notes.md"
     try:
         with open(output_filename, "w", encoding="utf-8") as f:
