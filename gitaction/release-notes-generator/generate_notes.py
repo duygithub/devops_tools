@@ -87,10 +87,20 @@ def main():
 
         try:
             with urllib.request.urlopen(req) as response:
-                data = json.loads(response.read().decode())
-                nodes = data.get('data', {}).get('issues', {}).get('nodes', [])
-                for issue in nodes:
-                    summary_lines.append(f"* **{issue['id']}**: {issue['title']} ([View]({issue['url']}))")
+                resp_json = json.loads(response.read().decode())
+                
+                # Check if 'data' is missing or None (common in GraphQL errors)
+                data_obj = resp_json.get('data')
+                
+                if not data_obj:
+                    # Print the actual error from Linear to help debug
+                    print(f"❌ Linear API returned errors: {json.dumps(resp_json.get('errors', 'Unknown Error'))}")
+                    summary_lines = []
+                else:
+                    nodes = data_obj.get('issues', {}).get('nodes', [])
+                    for issue in nodes:
+                        summary_lines.append(f"* **{issue['id']}**: {issue['title']} ([View]({issue['url']}))")
+                        
         except Exception as e:
             print(f"Warning: Failed to fetch Linear data: {e}")
 
