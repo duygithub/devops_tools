@@ -21,6 +21,7 @@ runs:
         # Pass GitHub Context to the script
         GITHUB_REPOSITORY: ${{ github.repository }}
         GITHUB_REF_NAME: ${{ github.ref_name }}
+        DRY_RUN: ${{ inputs.dry-run }}
         
       # ${{ github.action_path }} ensures it finds the script inside the action folder
       run: python3 ${{ github.action_path }}/generate_notes.py
