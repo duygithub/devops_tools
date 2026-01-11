@@ -17,7 +17,6 @@ def main():
     current_tag = os.environ.get('GITHUB_REF_NAME') # e.g. "v1.0.1"
     
     # Check for Dry Run flag (defaults to false)
-    # The action.yml passes this as a string "true" or "false"
     is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
     print(f"Generating notes for tag: {current_tag}")
@@ -26,8 +25,6 @@ def main():
 
     # 1. Identify the Commit Range (Previous Tag -> Current Tag)
     try:
-        # Get the previous tag reachable from HEAD (skipping the current one if it points to HEAD)
-        # We use 'git describe' to find the closest tag before this one.
         prev_tag = run_command(f"git describe --tags --abbrev=0 {current_tag}^ 2>/dev/null || echo ''")
     except:
         prev_tag = ""
@@ -40,9 +37,10 @@ def main():
         log_range = current_tag
 
     # 2. Get Commit Messages
-    # Format: "CommitHash|Subject"
+    # UPDATED FORMAT: "CommitHash|AuthorName|Subject"
+    # We put Author in the middle to avoid issues if Subject contains pipes
     try:
-        git_log = run_command(f'git log {log_range} --pretty=format:"%h|%s"')
+        git_log = run_command(f'git log {log_range} --pretty=format:"%h|%an|%s"')
         commits = git_log.splitlines()
     except Exception as e:
         print(f"Error fetching git log: {e}")
@@ -57,10 +55,14 @@ def main():
 
     for line in commits:
         if "|" not in line: continue
-        hash_id, subject = line.split("|", 1)
+        # Split into exactly 3 parts
+        parts = line.split("|", 2)
+        if len(parts) < 3: continue
         
-        # Add to Change Log section
-        change_log_lines.append(f"* {subject} ({hash_id})")
+        hash_id, author, subject = parts
+        
+        # UPDATED: Add Author to the line
+        change_log_lines.append(f"* {subject} ({hash_id}) - @{author}")
         
         # Find Linear IDs
         found = re.findall(id_pattern, subject)
@@ -72,7 +74,6 @@ def main():
     if linear_ids and linear_api_key:
         print(f"Fetching titles for {len(linear_ids)} tickets...")
         
-        # Construct GraphQL query for multiple issues
         ids_string = '", "'.join(linear_ids)
         query = f"""
         query {{
@@ -101,8 +102,29 @@ def main():
         except Exception as e:
             print(f"Warning: Failed to fetch Linear data: {e}")
 
-    # 5. Assemble Markdown
-    markdown_body = "## 📝 Summary (Linear Tickets)\n"
+    # 5. Build Release Info Section (NEW)
+    release_branch = "Unknown"
+    release_author = os.environ.get('GITHUB_ACTOR', 'Unknown')
+    
+    # Try to parse GitHub Event payload to get accurate Release data
+    event_path = os.environ.get('GITHUB_EVENT_PATH')
+    if event_path and os.path.exists(event_path):
+        try:
+            with open(event_path, 'r') as f:
+                event_data = json.load(f)
+            # Check if this was triggered by a Release event
+            if 'release' in event_data:
+                release_branch = event_data['release'].get('target_commitish', release_branch)
+                release_author = event_data['release'].get('author', {}).get('login', release_author)
+        except Exception as e:
+            print(f"Warning: Could not parse event payload: {e}")
+
+    # 6. Assemble Markdown
+    markdown_body = "## 🚀 Release Info\n"
+    markdown_body += f"* **Branch:** {release_branch}\n"
+    markdown_body += f"* **Created By:** {release_author}\n\n"
+
+    markdown_body += "## 📝 Summary (Linear Tickets)\n"
     if summary_lines:
         markdown_body += "\n".join(summary_lines)
     else:
@@ -114,7 +136,16 @@ def main():
     else:
         markdown_body += "No commits found in this range."
 
-    # 6. Output or Update Release
+    # 7. Generate Local File (NEW REQUIREMENT)
+    output_filename = "release_notes.md"
+    try:
+        with open(output_filename, "w", encoding="utf-8") as f:
+            f.write(markdown_body)
+        print(f"✅ Generated local file: {output_filename}")
+    except Exception as e:
+        print(f"Error writing local file: {e}")
+
+    # 8. Output or Update Release
     if is_dry_run:
         print("\n" + "="*40)
         print("📜 DRY RUN OUTPUT (Markdown):")
