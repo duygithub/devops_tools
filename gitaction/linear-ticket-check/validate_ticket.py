@@ -54,6 +54,13 @@ def main():
         text_to_check = os.environ.get('COMMIT_MSG', '')
         check_source = 'Commit Message'
 
+        # --- NEW LOGIC: Ignore Merge Commits ---
+        # Standard GitHub merge commits start with these phrases
+        if text_to_check.startswith('Merge pull request') or text_to_check.startswith('Merge branch'):
+            print(f"Skipping validation for Merge Commit: {text_to_check}")
+            sys.exit(0)
+        # ---------------------------------------
+
     elif event_name == 'pull_request':
         pr_body = os.environ.get('PR_BODY', '')
         pr_title = os.environ.get('PR_TITLE', '')
@@ -62,7 +69,6 @@ def main():
         if not pr_body or pr_body == 'None':
              pr_body = ''
         
-        # --- NEW LOGIC START ---
         lines = pr_body.splitlines()
         
         if not lines:
@@ -78,7 +84,6 @@ def main():
             print('Event: Pull Request (Body exists -> Checking First Line of Description)')
             text_to_check = lines[0]
             check_source = 'First line of PR Description'
-        # --- NEW LOGIC END ---
 
     # 2. Parse Ticket ID
     # Matches 'ID: ' followed by 10+ chars
