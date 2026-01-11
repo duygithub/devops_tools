@@ -4,17 +4,25 @@ import sys
 import json
 import subprocess
 import urllib.request
+import urllib.error
 
 def run_command(command):
     return subprocess.check_output(command, shell=True).decode('utf-8').strip()
 
 def main():
+    # --- Configuration ---
     linear_api_key = os.environ.get('LINEAR_API_KEY')
     github_token = os.environ.get('GITHUB_TOKEN')
     repo_name = os.environ.get('GITHUB_REPOSITORY') # e.g. "my-org/my-repo"
     current_tag = os.environ.get('GITHUB_REF_NAME') # e.g. "v1.0.1"
+    
+    # Check for Dry Run flag (defaults to false)
+    # The action.yml passes this as a string "true" or "false"
+    is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
-    print(f"Generating notes for {current_tag}...")
+    print(f"Generating notes for tag: {current_tag}")
+    if is_dry_run:
+        print("🧪 MODE: DRY RUN (No changes will be pushed to GitHub)")
 
     # 1. Identify the Commit Range (Previous Tag -> Current Tag)
     try:
@@ -33,8 +41,12 @@ def main():
 
     # 2. Get Commit Messages
     # Format: "CommitHash|Subject"
-    git_log = run_command(f'git log {log_range} --pretty=format:"%h|%s"')
-    commits = git_log.splitlines()
+    try:
+        git_log = run_command(f'git log {log_range} --pretty=format:"%h|%s"')
+        commits = git_log.splitlines()
+    except Exception as e:
+        print(f"Error fetching git log: {e}")
+        sys.exit(1)
 
     # 3. Extract Linear IDs and Build Change Log
     linear_ids = set()
@@ -59,11 +71,8 @@ def main():
     summary_lines = []
     if linear_ids and linear_api_key:
         print(f"Fetching titles for {len(linear_ids)} tickets...")
-        # Construct GraphQL query for multiple issues
-        # We fetch them one by one or construct a large 'nodes' query. 
-        # For simplicity in this script, we loop (or you can optimize with an 'in' filter).
         
-        # Optimized: specific tickets query
+        # Construct GraphQL query for multiple issues
         ids_string = '", "'.join(linear_ids)
         query = f"""
         query {{
@@ -100,10 +109,22 @@ def main():
         markdown_body += "No Linear tickets referenced."
 
     markdown_body += "\n\n## 🛠 Change Log\n"
-    markdown_body += "\n".join(change_log_lines)
+    if change_log_lines:
+        markdown_body += "\n".join(change_log_lines)
+    else:
+        markdown_body += "No commits found in this range."
 
-    # 6. Update GitHub Release
-    # We need to find the Release ID associated with this tag, then update it.
+    # 6. Output or Update Release
+    if is_dry_run:
+        print("\n" + "="*40)
+        print("📜 DRY RUN OUTPUT (Markdown):")
+        print("="*40)
+        print(markdown_body)
+        print("="*40 + "\n")
+        print("Dry run complete. Exiting success.")
+        sys.exit(0)
+
+    # --- LIVE UPDATE LOGIC ---
     print("Updating GitHub Release...")
     
     api_base = f"https://api.github.com/repos/{repo_name}"
@@ -113,8 +134,8 @@ def main():
         "Content-Type": "application/json"
     }
 
-    # A. Get the release by tag
     try:
+        # A. Get the release ID by tag
         req = urllib.request.Request(f"{api_base}/releases/tags/{current_tag}", headers=headers)
         with urllib.request.urlopen(req) as response:
             release_data = json.loads(response.read().decode())
@@ -129,11 +150,13 @@ def main():
             method="PATCH"
         )
         with urllib.request.urlopen(req_update) as response:
-            print("Successfully updated Release notes!")
+            print(f"Successfully updated Release {current_tag}!")
 
     except urllib.error.HTTPError as e:
         print(f"Error updating GitHub release (Tag might not have a release object yet): {e}")
-        # Optional: You could create the release here if it returns 404
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
