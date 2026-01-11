@@ -48,9 +48,7 @@ def main():
     linear_ids = set()
     change_log_lines = []
     
-    # --- FIX IS HERE ---
-    # Old Regex: r'([A-Z]+-\d+)' matches PA-0 which breaks API
-    # New Regex: r'([A-Z]+-[1-9][0-9]*)' ensures number starts with 1-9
+    # Regex ensures number starts with 1-9 (avoids PA-0)
     id_pattern = r'([A-Z]+-[1-9][0-9]*)'
 
     for line in commits:
@@ -71,11 +69,12 @@ def main():
         print(f"Fetching titles for {len(linear_ids)} tickets...")
         ids_string = '", "'.join(linear_ids)
         
+        # CHANGED: Request 'identifier' (CPT-123) instead of 'id' (UUID)
         query = f"""
         query {{
           issues(filter: {{ id: {{ in: ["{ids_string}"] }} }}) {{
             nodes {{
-              id
+              identifier
               title
               url
             }}
@@ -93,7 +92,6 @@ def main():
             with urllib.request.urlopen(req) as response:
                 resp_json = json.loads(response.read().decode())
                 
-                # Check for errors in the payload
                 data_obj = resp_json.get('data')
                 
                 if not data_obj:
@@ -102,7 +100,8 @@ def main():
                 else:
                     nodes = data_obj.get('issues', {}).get('nodes', [])
                     for issue in nodes:
-                        summary_lines.append(f"* **{issue['id']}**: {issue['title']} ([View]({issue['url']}))")
+                        # CHANGED: Use issue['identifier'] here
+                        summary_lines.append(f"* **{issue['identifier']}**: {issue['title']} ([View]({issue['url']}))")
                         
         except Exception as e:
             print(f"Warning: Failed to fetch Linear data: {e}")
