@@ -14,10 +14,9 @@ def main():
     # --- Configuration ---
     linear_api_key = os.environ.get('LINEAR_API_KEY')
     github_token = os.environ.get('GITHUB_TOKEN')
-    repo_name = os.environ.get('GITHUB_REPOSITORY') # e.g. "my-org/my-repo"
-    current_tag = os.environ.get('GITHUB_REF_NAME') # e.g. "v1.0.1"
+    repo_name = os.environ.get('GITHUB_REPOSITORY') 
+    current_tag = os.environ.get('GITHUB_REF_NAME')
     
-    # Check for Dry Run flag
     is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 
     print(f"Generating notes for tag: {current_tag}")
@@ -48,7 +47,11 @@ def main():
     # 3. Extract Linear IDs and Build Change Log
     linear_ids = set()
     change_log_lines = []
-    id_pattern = r'([A-Z]+-\d+)'
+    
+    # --- FIX IS HERE ---
+    # Old Regex: r'([A-Z]+-\d+)' matches PA-0 which breaks API
+    # New Regex: r'([A-Z]+-[1-9][0-9]*)' ensures number starts with 1-9
+    id_pattern = r'([A-Z]+-[1-9][0-9]*)'
 
     for line in commits:
         if "|" not in line: continue
@@ -67,6 +70,7 @@ def main():
     if linear_ids and linear_api_key:
         print(f"Fetching titles for {len(linear_ids)} tickets...")
         ids_string = '", "'.join(linear_ids)
+        
         query = f"""
         query {{
           issues(filter: {{ id: {{ in: ["{ids_string}"] }} }}) {{
@@ -89,11 +93,10 @@ def main():
             with urllib.request.urlopen(req) as response:
                 resp_json = json.loads(response.read().decode())
                 
-                # Check if 'data' is missing or None (common in GraphQL errors)
+                # Check for errors in the payload
                 data_obj = resp_json.get('data')
                 
                 if not data_obj:
-                    # Print the actual error from Linear to help debug
                     print(f"❌ Linear API returned errors: {json.dumps(resp_json.get('errors', 'Unknown Error'))}")
                     summary_lines = []
                 else:
@@ -104,10 +107,9 @@ def main():
         except Exception as e:
             print(f"Warning: Failed to fetch Linear data: {e}")
 
-    # 5. Build Release Info Section (UPDATED)
+    # 5. Build Release Info Section
     release_branch = "Unknown"
     release_author = os.environ.get('GITHUB_ACTOR', 'Unknown')
-    # Default time is "Now" (UTC) unless overridden by the event
     release_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
     
     event_path = os.environ.get('GITHUB_EVENT_PATH')
@@ -116,22 +118,14 @@ def main():
             with open(event_path, 'r') as f:
                 event_data = json.load(f)
             
-            # Case A: Real Release Event
             if 'release' in event_data:
                 release_branch = event_data['release'].get('target_commitish', release_branch)
                 release_author = event_data['release'].get('author', {}).get('login', release_author)
-                
-                # Parse and reformat the timestamp from GitHub (e.g. 2023-10-05T14:48:00Z)
                 raw_date = event_data['release'].get('created_at')
                 if raw_date:
                     release_time = raw_date.replace('T', ' ').replace('Z', ' UTC')
-
-            # Case B: Fallback for Dispatch/Push (Testing)
             else:
-                # If we are testing, the "branch" is technically the ref we are on
                 if release_branch == "Unknown":
-                    # Try getting ref name, but if it's a tag, this will just be the tag name.
-                    # This is just a hint for the dry run output.
                     release_branch = os.environ.get('GITHUB_REF_NAME', 'HEAD')
 
         except Exception as e:
@@ -181,7 +175,6 @@ def main():
 
     # --- LIVE UPDATE LOGIC ---
     print("Updating GitHub Release...")
-    
     api_base = f"https://api.github.com/repos/{repo_name}"
     headers = {
         "Authorization": f"Bearer {github_token}",
@@ -190,13 +183,11 @@ def main():
     }
 
     try:
-        # A. Get the release ID by tag
         req = urllib.request.Request(f"{api_base}/releases/tags/{current_tag}", headers=headers)
         with urllib.request.urlopen(req) as response:
             release_data = json.loads(response.read().decode())
             release_id = release_data['id']
             
-        # B. Patch the release with new body
         update_data = json.dumps({"body": markdown_body}).encode("utf-8")
         req_update = urllib.request.Request(
             f"{api_base}/releases/{release_id}", 
