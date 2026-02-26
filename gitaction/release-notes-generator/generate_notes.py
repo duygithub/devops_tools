@@ -4,7 +4,6 @@ import sys
 import json
 import subprocess
 import urllib.request
-import urllib.error
 from datetime import datetime
 
 def run_command(command):
@@ -13,18 +12,13 @@ def run_command(command):
 def main():
     # --- Configuration ---
     linear_api_key = os.environ.get('LINEAR_API_KEY')
-    github_token = os.environ.get('GITHUB_TOKEN')
-    repo_name = os.environ.get('GITHUB_REPOSITORY') 
-    current_tag = os.environ.get('GITHUB_REF_NAME')
-    
-    is_dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
+    current_tag = os.environ.get('GITHUB_REF_NAME') # This contains the tag name
 
     print(f"Generating notes for tag: {current_tag}")
-    if is_dry_run:
-        print("🧪 MODE: DRY RUN (No changes will be pushed to GitHub)")
 
-    # 1. Identify the Commit Range
+    # 1. Identify the Commit Range based purely on Git Tags
     try:
+        # Find the previous tag immediately before the current one
         prev_tag = run_command(f"git describe --tags --abbrev=0 {current_tag}^ 2>/dev/null || echo ''")
     except:
         prev_tag = ""
@@ -69,7 +63,6 @@ def main():
         print(f"Fetching titles for {len(linear_ids)} tickets...")
         ids_string = '", "'.join(linear_ids)
         
-        # CHANGED: Request 'identifier' (CPT-123) instead of 'id' (UUID)
         query = f"""
         query {{
           issues(filter: {{ id: {{ in: ["{ids_string}"] }} }}) {{
@@ -91,7 +84,6 @@ def main():
         try:
             with urllib.request.urlopen(req) as response:
                 resp_json = json.loads(response.read().decode())
-                
                 data_obj = resp_json.get('data')
                 
                 if not data_obj:
@@ -100,41 +92,20 @@ def main():
                 else:
                     nodes = data_obj.get('issues', {}).get('nodes', [])
                     for issue in nodes:
-                        # CHANGED: Use issue['identifier'] here
                         summary_lines.append(f"* **{issue['identifier']}**: {issue['title']} ([View]({issue['url']}))")
                         
         except Exception as e:
             print(f"Warning: Failed to fetch Linear data: {e}")
 
-    # 5. Build Release Info Section
-    release_branch = "Unknown"
+    # 5. Build Info Section
     release_author = os.environ.get('GITHUB_ACTOR', 'Unknown')
     release_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    
-    event_path = os.environ.get('GITHUB_EVENT_PATH')
-    if event_path and os.path.exists(event_path):
-        try:
-            with open(event_path, 'r') as f:
-                event_data = json.load(f)
-            
-            if 'release' in event_data:
-                release_branch = event_data['release'].get('target_commitish', release_branch)
-                release_author = event_data['release'].get('author', {}).get('login', release_author)
-                raw_date = event_data['release'].get('created_at')
-                if raw_date:
-                    release_time = raw_date.replace('T', ' ').replace('Z', ' UTC')
-            else:
-                if release_branch == "Unknown":
-                    release_branch = os.environ.get('GITHUB_REF_NAME', 'HEAD')
-
-        except Exception as e:
-            print(f"Warning: Could not parse event payload: {e}")
 
     # 6. Assemble Markdown
-    markdown_body = "## 🚀 Release Info\n"
-    markdown_body += f"* **Branch:** {release_branch}\n"
+    markdown_body = "## 🚀 Tag Info\n"
+    markdown_body += f"* **Tag:** {current_tag}\n"
     markdown_body += f"* **Time:** {release_time}\n"
-    markdown_body += f"* **Created By:** {release_author}\n\n"
+    markdown_body += f"* **Triggered By:** {release_author}\n\n"
 
     markdown_body += "## 📝 Summary (Linear Tickets)\n"
     if summary_lines:
@@ -162,47 +133,14 @@ def main():
     except Exception as e:
         print(f"Error writing local file: {e}")
 
-    # 8. Output or Update Release
-    if is_dry_run:
-        print("\n" + "="*40)
-        print("📜 DRY RUN OUTPUT (Markdown):")
-        print("="*40)
-        print(markdown_body)
-        print("="*40 + "\n")
-        print("Dry run complete. Exiting success.")
-        sys.exit(0)
-
-    # --- LIVE UPDATE LOGIC ---
-    print("Updating GitHub Release...")
-    api_base = f"https://api.github.com/repos/{repo_name}"
-    headers = {
-        "Authorization": f"Bearer {github_token}",
-        "Accept": "application/vnd.github.v3+json",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        req = urllib.request.Request(f"{api_base}/releases/tags/{current_tag}", headers=headers)
-        with urllib.request.urlopen(req) as response:
-            release_data = json.loads(response.read().decode())
-            release_id = release_data['id']
-            
-        update_data = json.dumps({"body": markdown_body}).encode("utf-8")
-        req_update = urllib.request.Request(
-            f"{api_base}/releases/{release_id}", 
-            data=update_data, 
-            headers=headers, 
-            method="PATCH"
-        )
-        with urllib.request.urlopen(req_update) as response:
-            print(f"Successfully updated Release {current_tag}!")
-
-    except urllib.error.HTTPError as e:
-        print(f"Error updating GitHub release (Tag might not have a release object yet): {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        sys.exit(1)
+    # 8. Output to Console
+    print("\n" + "="*40)
+    print("📜 GENERATED NOTES OUTPUT:")
+    print("="*40)
+    print(markdown_body)
+    print("="*40 + "\n")
+    print("Successfully generated notes based on git tags. Exiting.")
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
