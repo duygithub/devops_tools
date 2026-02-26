@@ -7,6 +7,10 @@ inputs:
   github-token:
     description: 'GitHub Token (usually secrets.GITHUB_TOKEN).'
     required: true
+  dry-run:
+    description: 'Run the generator without creating an tag.'
+    required: false
+    default: 'false'    
 
 runs:
   using: "composite"
